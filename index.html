@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HBntory - AI Inventory Platform</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; background: #f4f6f9; color: #333; }
+        .card { background: white; padding: 24px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        input, button { padding: 10px; margin: 5px 0; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        pre { background: #f8f9fa; padding: 12px; border-radius: 4px; overflow-x: auto; border: 1px solid #e9ecef; }
+        .badge { display: inline-block; padding: 4px 8px; font-size: 12px; font-weight: bold; border-radius: 4px; background: #28a745; color: white; }
+    </style>
+</head>
+<body>
+
+    <h1>HBntory Platform Dashboard</h1>
+    <p>Secure Backoffice & Public AI Query Interface</p>
+
+    <!-- Authentication Card -->
+    <div class="card">
+        <h2>1. Authentication</h2>
+        <p>Log in to acquire your session JWT token.</p>
+        <input type="text" id="username" placeholder="Username (e.g., admin)" value="admin">
+        <input type="password" id="password" placeholder="Password (e.g., admin123)" value="admin123">
+        <button onclick="login()">Authenticate</button>
+        <p>Status: <span id="auth-status" class="badge" style="background: #dc3545;">Not Authenticated</span></p>
+    </div>
+
+    <!-- AI Query Interface Card -->
+    <div class="card">
+        <h2>2. AI-Powered Query Interface</h2>
+        <p>Ask natural language questions or search inventory keywords.</p>
+        <input type="text" id="ai-keyword" placeholder="Try searching for 'router' or 'Electronics'...">
+        <button onclick="runAISearch()">Query AI Agent</button>
+        <h3>AI Response:</h3>
+        <pre id="ai-output">No query executed yet.</pre>
+    </div>
+
+    <!-- Backoffice Inventory View -->
+    <div class="card">
+        <h2>3. Backoffice Inventory View</h2>
+        <button onclick="loadInventory()">Fetch All Inventory Items</button>
+        <pre id="inventory-output">Click button to load inventory items.</pre>
+    </div>
+
+    <script>
+        let authToken = "";
+
+        async function login() {
+            const username = document.getElementById("username").value;
+            const password = document.getElementById("password").value;
+            
+            const formData = new URLSearchParams();
+            formData.append("username", username);
+            formData.append("password", password);
+
+            try {
+                const response = await fetch("/token", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    authToken = data.access_token;
+                    document.getElementById("auth-status").innerText = "Authenticated";
+                    document.getElementById("auth-status").style.background = "#28a745";
+                    alert("Successfully authenticated and token stored!");
+                } else {
+                    alert("Authentication failed. Check credentials or register user first.");
+                }
+            } catch (err) {
+                alert("Error connecting to server: " + err);
+            }
+        }
+
+        async function runAISearch() {
+            if (!authToken) {
+                alert("Please authenticate first!");
+                return;
+            }
+            const keyword = document.getElementById("ai-keyword").value;
+            try {
+                const response = await fetch(`/ai/search?keyword=${encodeURIComponent(keyword)}`, {
+                    headers: { "Authorization": `Bearer ${authToken}` }
+                });
+                const data = await response.json();
+                document.getElementById("ai-output").innerText = JSON.stringify(data, null, 2);
+            } catch (err) {
+                document.getElementById("ai-output").innerText = "Error: " + err;
+            }
+        }
+
+        async function loadInventory() {
+            if (!authToken) {
+                alert("Please authenticate first!");
+                return;
+            }
+            try {
+                const response = await fetch("/items", {
+                    headers: { "Authorization": `Bearer ${authToken}` }
+                });
+                const data = await response.json();
+                document.getElementById("inventory-output").innerText = JSON.stringify(data, null, 2);
+            } catch (err) {
+                document.getElementById("inventory-output").innerText = "Error: " + err;
+            }
+        }
+    </script>
+</body>
+</html>
