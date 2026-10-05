@@ -1,16 +1,18 @@
-from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from passlib.context import CryptContext
-from jose import JWTError, jwt
 from datetime import datetime, timedelta
-from models import Base, User, Item
-from ai_agent_tools import search_inventory_by_keyword, get_full_inventory_summary
-from fastapi.responses import FileResponse
+import os
 
-# Security configurations
-SECRET_KEY = "super-secret-key-change-in-production"
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.responses import FileResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from sqlalchemy.orm import Session, joinedload
+
+from ai_agent_tools import search_inventory_by_keyword
+from database import SessionLocal, engine
+from models import Base, Item, User
+
+SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-key-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -19,38 +21,40 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 app = FastAPI(title="HBntory API with AI & JWT Auth", version="1.0")
 
-import os
-
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///hbntory.db")
-
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}, echo=False)
-else:
-    engine = create_engine(DATABASE_URL, echo=False)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def get_db():
     db = SessionLocal()
     try:
-
         yield db
     finally:
         db.close()
 
+
+@app.on_event("startup")
+def on_startup():
+    Base.metadata.create_all(bind=engine)
+    from seed_and_query import seed_admin, seed_data
+
+    seed_admin()
+    seed_data()
+
+
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
+
 
 def get_password_hash(password: str):
     if len(password) > 72:
         password = password[:72]
     return pwd_context.hash(password)
 
+
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
@@ -65,25 +69,25 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    
+
     user = db.query(User).filter(User.username == username).first()
     if user is None:
         raise credentials_exception
     return user
 
-# --- ENDPOINTS ---
 
 @app.post("/register")
 def register_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     existing_user = db.query(User).filter(User.username == form_data.username).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already registered")
-    
+
     hashed_password = get_password_hash(form_data.password)
     new_user = User(username=form_data.username, hashed_password=hashed_password)
     db.add(new_user)
     db.commit()
     return {"message": f"User {form_data.username} registered successfully!"}
+
 
 @app.post("/token")
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -100,33 +104,31 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
+
 @app.get("/items")
 def get_items(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    items = db.query(Item).all()
+    items = db.query(Item).options(joinedload(Item.category)).all()
     return [
         {
             "sku": item.sku,
             "name": item.name,
             "unit_price": item.unit_price,
-            "category": item.category.name
+            "category": item.category.name,
         }
         for item in items
     ]
 
-# --- AI AGENT ENDPOINT ---
+
 @app.get("/ai/search")
 def ai_search_inventory(keyword: str, current_user: User = Depends(get_current_user)):
-    """
-    Protected AI agent tool endpoint to search inventory dynamically via keywords.
-    """
     results = search_inventory_by_keyword(keyword)
     return {
         "query_keyword": keyword,
         "executed_by": current_user.username,
-        "results": results
+        "results": results,
     }
 
-# --- FRONTEND ROUTE ---
+
 @app.get("/")
 def read_root():
     return FileResponse("index.html")
